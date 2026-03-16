@@ -283,20 +283,26 @@
 
     // --- QRコードコンポーネント ---
     const QRCodeImage = ({ text }) => {
-      const [src, setSrc] = useState('');
+      const [svg, setSvg] = useState('');
       useEffect(() => {
         if (!window.QRCode) return;
-        window.QRCode.toDataURL(text, { 
-          width: 120, 
+        // 印刷時に確実に表示させるため、画像(Data URL)ではなくSVG要素として直接描画する
+        window.QRCode.toString(text, { 
+          type: 'svg',
           margin: 1, 
           color: { dark: '#2C3E50', light: '#FFFFFF' }, 
           errorCorrectionLevel: 'M' 
-        }, (err, url) => {
-          if (!err) setSrc(url);
+        }, (err, string) => {
+          if (!err) setSvg(string);
         });
       }, [text]);
       
-      return src ? <img src={src} alt="QR Code" style={{ width: '22mm', height: '22mm' }} /> : null;
+      return svg ? (
+        <div 
+          className="w-full h-full flex items-center justify-center [&>svg]:w-full [&>svg]:h-full" 
+          dangerouslySetInnerHTML={{ __html: svg }} 
+        />
+      ) : null;
     };
 
     // --- 印刷用画面コンポーネント ---
@@ -342,7 +348,7 @@
                       <div className="text-[10px] text-gray-400 font-mono tracking-widest">{student.barcode}</div>
                     </div>
                     
-                    <div className="shrink-0 z-10 bg-white p-1 rounded-xl border-2 border-app-sage/40 shadow-sm flex items-center justify-center">
+                    <div className="shrink-0 z-10 bg-white p-1 rounded-xl border-2 border-app-sage/40 shadow-sm w-[24mm] h-[24mm]">
                       <QRCodeImage text={student.barcode} />
                     </div>
                   </div>
