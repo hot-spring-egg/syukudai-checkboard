@@ -12,7 +12,6 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-  <!-- より安定したQR生成ライブラリ (qrious) に変更 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
 
   <!-- Google Fonts: 北欧風の丸ゴシック -->
@@ -68,7 +67,6 @@
       -webkit-tap-highlight-color: transparent;
     }
     
-    /* カスタムスクロールバー */
     ::-webkit-scrollbar {
       width: 8px;
       height: 8px;
@@ -85,7 +83,6 @@
       background: #a8a8a8; 
     }
 
-    /* カメラ枠のハック（黒い余白を出さずにピッタリ埋める） */
     #reader {
       width: 100% !important;
       height: 100% !important;
@@ -99,11 +96,10 @@
     #reader video {
       width: 100% !important;
       height: 100% !important;
-      object-fit: cover !important; /* 縦横比を維持したまま枠いっぱいに広げる */
+      object-fit: cover !important;
       border-radius: 1.5rem;
     }
 
-    /* 印刷時の設定 */
     @media print {
       body, #root { 
         background-color: white !important; 
@@ -111,7 +107,6 @@
         print-color-adjust: exact; 
       }
       .no-print { display: none !important; }
-      /* 上部に10mmの余白、左右は5mm、下部は10mmに設定 */
       @page { margin: 10mm 5mm 10mm 5mm; size: A4; }
     }
   </style>
@@ -147,7 +142,6 @@
         const targetDay = DateUtils.getDayOfWeek(targetDate);
 
         return tasks.filter(t => {
-          // ★ 大元の有効/無効フラグ。非表示（休止）にされている場合は無条件で出さない
           if (t.active === false) return false;
 
           let isScheduled = false;
@@ -158,7 +152,7 @@
             const beforeEnd = !t.endDate || targetDate <= t.endDate;
             isScheduled = afterStart && beforeEnd;
           } else {
-            isScheduled = true; // manual設定でactiveがtrueなら常に表示
+            isScheduled = true;
           }
           if (!isScheduled) return false;
 
@@ -208,10 +202,12 @@
       { id: 't4', name: 'たいそうふく', type: 'belonging', schedule: 'manual', active: false },
     ];
 
+    // ★欠席の選択肢を追加（isSpecial: true で児童側には出さない）
     const HEALTH_OPTIONS = [
       { id: 'good', label: 'げんき！', emoji: '😄', color: 'bg-app-sage', textColor: 'text-white' },
       { id: 'normal', label: 'ふつう', emoji: '😐', color: 'bg-app-yellow', textColor: 'text-app-navy' },
-      { id: 'tired', label: 'つかれた', emoji: '😣', color: 'bg-app-terracotta', textColor: 'text-white' }
+      { id: 'tired', label: 'つかれた', emoji: '😣', color: 'bg-app-terracotta', textColor: 'text-white' },
+      { id: 'absent', label: 'おやすみ', emoji: '🛌', color: 'bg-gray-400', textColor: 'text-white', isSpecial: true }
     ];
 
     // ==========================================
@@ -286,13 +282,11 @@
 
     const useUI = () => useContext(UIContext);
 
-    // --- 改良版: QRコードコンポーネント ---
     const QRCodeImage = ({ text }) => {
       const [src, setSrc] = useState('');
       useEffect(() => {
         try {
           if (window.QRious) {
-            // ローカルで瞬時に生成
             const qr = new window.QRious({
               value: text,
               size: 250,
@@ -300,11 +294,9 @@
             });
             setSrc(qr.toDataURL());
           } else {
-            // ライブラリが読み込めなかった場合の予備（外部API）
             setSrc(`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(text)}`);
           }
         } catch (e) {
-          // エラーが発生した場合も外部APIにフォールバック
           setSrc(`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(text)}`);
         }
       }, [text]);
@@ -316,7 +308,6 @@
       );
     };
 
-    // --- 印刷用画面コンポーネント ---
     const PrintCardsView = ({ students, onClose }) => {
       return (
         <div className="min-h-screen bg-white">
@@ -598,7 +589,8 @@
                 <span className="mr-2 text-3xl">🌡️</span> いまの きもちは？
               </h3>
               <div className="flex justify-between gap-3">
-                {HEALTH_OPTIONS.map(opt => {
+                {/* ★ 児童画面には absent (おやすみ) は出さない */}
+                {HEALTH_OPTIONS.filter(opt => !opt.isSpecial).map(opt => {
                   const isSelected = health === opt.id;
                   return (
                     <button
@@ -631,7 +623,7 @@
     // --- 先生：ダッシュボード サブコンポーネント ---
 
     const TodayTab = ({ students, tasks, submissions, setSubmissions }) => {
-      const { showConfirm } = useUI();
+      const { showConfirm, showToast } = useUI();
       const todayStr = DateUtils.getTodayStr();
       const todaySubmissions = submissions.filter(s => s.date === todayStr);
 
@@ -645,6 +637,71 @@
         );
       };
 
+      // ★ ワンタッチ欠席処理
+      const handleToggleAbsent = (studentId) => {
+        setSubmissions(prev => {
+          const existingSubIndex = prev.findIndex(s => s.studentId === studentId && s.date === todayStr);
+          if (existingSubIndex >= 0) {
+            const newSubs = [...prev];
+            const sub = { ...newSubs[existingSubIndex] };
+            if (sub.health === 'absent') {
+              // 欠席解除 -> 記録を削除（未提出に戻す）
+              newSubs.splice(existingSubIndex, 1);
+              showToast('お休みの設定を取り消しました', 'success');
+            } else {
+              // 提出済みのものを欠席で上書き
+              sub.health = 'absent';
+              sub.items = {}; // 提出物はリセット
+              newSubs[existingSubIndex] = sub;
+              showToast('お休みに設定しました', 'success');
+            }
+            return newSubs;
+          } else {
+            // 新規で欠席を登録
+            showToast('お休みに設定しました', 'success');
+            return [...prev, {
+              id: 'sub_' + Date.now(),
+              studentId,
+              date: todayStr,
+              timestamp: new Date().toISOString(),
+              items: {},
+              health: 'absent'
+            }];
+          }
+        });
+      };
+
+      const handleToggleSubmit = (studentId, taskId) => {
+        setSubmissions(prev => {
+          const existingSubIndex = prev.findIndex(s => s.studentId === studentId && s.date === todayStr);
+          if (existingSubIndex >= 0) {
+            const newSubs = [...prev];
+            const sub = { ...newSubs[existingSubIndex] };
+            
+            // 欠席設定になっている場合はバッジの操作をブロック
+            if (sub.health === 'absent') {
+              showToast('先にお休みの設定を解除してください', 'error');
+              return prev;
+            }
+
+            sub.items = { ...sub.items, [taskId]: !sub.items[taskId] };
+            newSubs[existingSubIndex] = sub;
+            showToast('提出状況を修正しました', 'success');
+            return newSubs;
+          } else {
+            showToast('提出状況を追加しました', 'success');
+            return [...prev, {
+              id: 'sub_' + Date.now(),
+              studentId,
+              date: todayStr,
+              timestamp: new Date().toISOString(),
+              items: { [taskId]: true },
+              health: 'normal'
+            }];
+          }
+        });
+      };
+
       const getHealthEmoji = (id) => HEALTH_OPTIONS.find(o => o.id === id)?.emoji || '❓';
 
       return (
@@ -652,7 +709,7 @@
           <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
             <div>
               <h3 className="text-sm font-bold text-gray-500 mb-1">きょうの提出率</h3>
-              <p className="text-4xl font-extrabold text-app-sage">{todaySubmissions.length} <span className="text-xl text-gray-400">/ {students.length}人</span></p>
+              <p className="text-4xl font-extrabold text-app-sage">{todaySubmissions.filter(s => s.health !== 'absent').length} <span className="text-xl text-gray-400">/ {students.length}人</span></p>
             </div>
             <button onClick={handleReset} className="px-5 py-2.5 bg-gray-100 text-gray-600 text-sm font-bold rounded-xl hover:bg-gray-200 transition-colors">
               リセット
@@ -660,6 +717,9 @@
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            <div className="p-3 bg-red-50 text-xs font-bold text-app-terracotta border-b border-red-100 flex items-center">
+              <span className="mr-2">💡</span> 各項目の「バッジ」や「🛌」をタップすると、提出や欠席の状態を修正できます。
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left whitespace-nowrap">
                 <thead className="bg-app-cream text-app-navy text-sm border-b-2 border-gray-100">
@@ -667,6 +727,7 @@
                     <th className="p-4 w-16 text-center">番号</th>
                     <th className="p-4 min-w-[10rem]">名前</th>
                     <th className="p-4 text-center w-24">体調</th>
+                    <th className="p-4 text-center w-20">欠席</th>
                     <th className="p-4">提出状況 <span className="text-xs font-normal text-gray-500 ml-2">🟩済 / 🟥未</span></th>
                   </tr>
                 </thead>
@@ -674,27 +735,46 @@
                   {students.sort((a,b)=>a.number - b.number).map(student => {
                     const sub = todaySubmissions.find(s => s.studentId === student.id);
                     const expectedTasks = TaskUtils.getExpectedTasks(student.id, tasks, submissions, todayStr);
+                    const isAbsent = sub?.health === 'absent';
                     const isAllSubmitted = expectedTasks.length === 0 || (sub && expectedTasks.every(t => sub.items && sub.items[t.id]));
 
                     return (
-                      <tr key={student.id} className={`transition-colors hover:bg-gray-50 ${isAllSubmitted ? '' : 'bg-red-50/30'}`}>
+                      <tr key={student.id} className={`transition-colors hover:bg-gray-100 ${isAbsent ? 'bg-gray-50' : (isAllSubmitted ? '' : 'bg-red-50/30')}`}>
                         <td className="p-4 text-center text-gray-400 font-mono">{student.number}</td>
-                        <td className="p-4 font-bold text-app-navy">{student.name}</td>
+                        <td className={`p-4 font-bold ${isAbsent ? 'text-gray-400' : 'text-app-navy'}`}>{student.name}</td>
                         <td className="p-4 text-2xl text-center">
-                          {sub ? <span className={sub.health === 'tired' ? 'animate-pulse inline-block' : ''}>{getHealthEmoji(sub.health)}</span> : <span className="text-gray-300">-</span>}
+                          {isAbsent ? <span className="text-gray-300">-</span> : (sub ? <span className={sub.health === 'tired' ? 'animate-pulse inline-block' : ''}>{getHealthEmoji(sub.health)}</span> : <span className="text-gray-300">-</span>)}
+                        </td>
+                        <td className="p-4 text-center">
+                          <button
+                            onClick={() => handleToggleAbsent(student.id)}
+                            className={`w-10 h-10 mx-auto rounded-full flex items-center justify-center text-xl transition-all ${isAbsent ? 'bg-app-sage text-white shadow-inner grayscale-0 opacity-100' : 'hover:bg-gray-200 grayscale opacity-40 hover:opacity-100'}`}
+                            title={isAbsent ? '欠席を取り消す' : '欠席にする'}
+                          >
+                            🛌
+                          </button>
                         </td>
                         <td className="p-4">
-                          <div className="flex flex-wrap gap-2">
-                            {expectedTasks.length === 0 && <span className="text-xs font-bold text-gray-300 bg-gray-100 px-2 py-1 rounded">項目なし</span>}
-                            {expectedTasks.map(task => {
-                              const isSubmitted = sub?.items?.[task.id];
-                              return (
-                                <span key={task.id} className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold text-white shadow-sm ${isSubmitted ? 'bg-app-sage' : 'bg-app-terracotta'}`}>
-                                  {task.name}
-                                </span>
-                              );
-                            })}
-                          </div>
+                          {isAbsent ? (
+                             <span className="inline-flex items-center px-3 py-1.5 rounded-md text-sm font-bold text-gray-500 bg-gray-200">お休み</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              {expectedTasks.length === 0 && <span className="text-xs font-bold text-gray-300 bg-gray-100 px-2 py-1 rounded">項目なし</span>}
+                              {expectedTasks.map(task => {
+                                const isSubmitted = sub?.items?.[task.id];
+                                return (
+                                  <span 
+                                    key={task.id} 
+                                    onClick={() => handleToggleSubmit(student.id, task.id)}
+                                    className={`cursor-pointer inline-flex items-center px-2.5 py-1.5 rounded-md text-xs font-bold text-white shadow-sm transition-all active:scale-90 hover:opacity-80 ${isSubmitted ? 'bg-app-sage' : 'bg-app-terracotta'}`}
+                                    title="タップで提出状態を変更"
+                                  >
+                                    {task.name}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -707,7 +787,8 @@
       );
     };
 
-    const HistoryTab = ({ students, tasks, submissions }) => {
+    const HistoryTab = ({ students, tasks, submissions, setSubmissions }) => {
+      const { showToast } = useUI();
       const availableMonths = Array.from(new Set(submissions.map(s => s.date.substring(0, 7)))).sort().reverse();
       const [selectedMonth, setSelectedMonth] = useState(availableMonths.length > 0 ? availableMonths[0] : DateUtils.getTodayStr().substring(0, 7));
       const [selectedStudentId, setSelectedStudentId] = useState('all');
@@ -715,6 +796,47 @@
       const monthSubmissions = submissions.filter(s => s.date.startsWith(selectedMonth));
       const datesInMonth = Array.from(new Set(monthSubmissions.map(s => s.date))).sort();
       const filteredStudents = selectedStudentId === 'all' ? students : students.filter(s => s.id === selectedStudentId);
+
+      const handleToggleHistorySubmit = (studentId, dateStr, taskId) => {
+        setSubmissions(prev => {
+          const existingSubIndex = prev.findIndex(s => s.studentId === studentId && s.date === dateStr);
+          if (existingSubIndex >= 0) {
+            const newSubs = [...prev];
+            const sub = { ...newSubs[existingSubIndex] };
+            sub.items = { ...sub.items, [taskId]: !sub.items[taskId] };
+            newSubs[existingSubIndex] = sub;
+            showToast(`${dateStr} の記録を修正しました`, 'success');
+            return newSubs;
+          }
+          showToast(`${dateStr} に記録を追加しました`, 'success');
+          return [...prev, {
+            id: 'sub_' + Date.now(),
+            studentId,
+            date: dateStr,
+            timestamp: new Date().toISOString(),
+            items: { [taskId]: true },
+            health: 'normal'
+          }];
+        });
+      };
+
+      // ★ 履歴からの欠席設定ロジック
+      const handleSetAbsentHistory = (studentId, dateStr) => {
+        setSubmissions(prev => [...prev, {
+          id: 'sub_' + Date.now(),
+          studentId,
+          date: dateStr,
+          timestamp: new Date().toISOString(),
+          items: {},
+          health: 'absent'
+        }]);
+        showToast(`${dateStr} をお休みに設定しました`, 'success');
+      };
+
+      const handleRemoveAbsentHistory = (studentId, dateStr) => {
+        setSubmissions(prev => prev.filter(s => !(s.studentId === studentId && s.date === dateStr)));
+        showToast(`お休みの設定を取り消しました`, 'success');
+      };
 
       return (
         <div className="space-y-6 animate-fade-in">
@@ -733,9 +855,12 @@
           </div>
 
           <div className="bg-white p-1 rounded-2xl shadow-sm border border-gray-100">
-            <div className="p-4 text-sm flex flex-wrap gap-4 bg-app-cream rounded-t-xl border-b border-gray-100">
-               <span className="font-bold text-app-navy">項目の略称：</span>
-               {tasks.map(t => <span key={t.id} className="text-gray-600">[{t.name.charAt(0)}] {t.name}</span>)}
+            <div className="p-4 text-sm flex flex-col gap-2 bg-app-cream rounded-t-xl border-b border-gray-100">
+               <div className="flex flex-wrap gap-4">
+                 <span className="font-bold text-app-navy">項目の略称：</span>
+                 {tasks.map(t => <span key={t.id} className="text-gray-600">[{t.name.charAt(0)}] {t.name}</span>)}
+               </div>
+               <p className="text-xs font-bold text-app-terracotta mt-1">※セル内のアイコンをタップすると修正できます。未提出「-」をタップすると欠席になります。</p>
             </div>
 
             <div className="overflow-x-auto relative max-h-[65vh] rounded-b-xl">
@@ -757,9 +882,23 @@
                         </td>
                         {datesInMonth.map(date => {
                           const sub = monthSubmissions.find(s => s.studentId === student.id && s.date === date);
-                          if (!sub) return <td key={date} className="p-3 bg-white text-gray-200">-</td>;
                           
-                          const tasksOnDate = Array.from(new Set(monthSubmissions.filter(s => s.date === date).flatMap(s => Object.keys(s.items || {}))));
+                          // 未提出の場合は「欠席にする」ボタンを表示
+                          if (!sub) return (
+                            <td key={date} className="p-3 bg-white text-center">
+                              <button onClick={() => handleSetAbsentHistory(student.id, date)} className="text-gray-300 hover:text-gray-500 font-bold px-3 py-1 rounded hover:bg-gray-100 transition-colors" title="欠席にする">-</button>
+                            </td>
+                          );
+                          
+                          // 欠席の場合は「休」ボタンを表示
+                          if (sub.health === 'absent') return (
+                            <td key={date} className="p-3 bg-white text-center">
+                              <button onClick={() => handleRemoveAbsentHistory(student.id, date)} className="w-6 h-6 mx-auto rounded flex items-center justify-center text-xs font-bold bg-gray-400 text-white shadow-sm hover:bg-gray-500 transition-colors" title="欠席を取り消す">休</button>
+                            </td>
+                          );
+                          
+                          // 通常の提出バッジ
+                          const tasksOnDate = Array.from(new Set(monthSubmissions.filter(s => s.date === date && s.health !== 'absent').flatMap(s => Object.keys(s.items || {}))));
                           return (
                             <td key={date} className="p-3 bg-white">
                               <div className="flex flex-wrap gap-1 justify-center">
@@ -767,7 +906,12 @@
                                   const taskObj = tasks.find(t => t.id === tId);
                                   const isSubmitted = sub.items?.[tId];
                                   return (
-                                    <span key={tId} title={taskObj?.name} className={`w-6 h-6 rounded flex items-center justify-center text-xs font-bold text-white shadow-sm ${isSubmitted ? 'bg-app-sage' : 'bg-app-terracotta'}`}>
+                                    <span 
+                                      key={tId} 
+                                      title={`タップで修正 (${taskObj?.name || '不明な項目'})`} 
+                                      onClick={() => handleToggleHistorySubmit(student.id, date, tId)}
+                                      className={`cursor-pointer w-6 h-6 rounded flex items-center justify-center text-xs font-bold text-white shadow-sm transition-transform active:scale-90 ${isSubmitted ? 'bg-app-sage' : 'bg-app-terracotta'}`}
+                                    >
                                       {taskObj ? taskObj.name.charAt(0) : '?'}
                                     </span>
                                   )
@@ -833,7 +977,7 @@
 
       return (
         <div className="space-y-8 animate-fade-in">
-          {/* 編集モーダル（幅を広げて2カラム化し、縦長を防ぐ） */}
+          {/* 編集モーダル */}
           {editingTask && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-40 backdrop-blur-sm animate-fade-in">
               <div className="bg-white rounded-3xl p-8 w-full max-w-4xl shadow-2xl animate-slide-up max-h-[95vh] overflow-y-auto">
@@ -1296,7 +1440,7 @@
 
           <main className="p-6 max-w-5xl mx-auto mt-4">
             {activeTab === 'today' && <TodayTab students={students} tasks={tasks} submissions={submissions} setSubmissions={setSubmissions} />}
-            {activeTab === 'history' && <HistoryTab students={students} tasks={tasks} submissions={submissions} />}
+            {activeTab === 'history' && <HistoryTab students={students} tasks={tasks} submissions={submissions} setSubmissions={setSubmissions} />}
             {activeTab === 'tasks' && <TasksTab tasks={tasks} setTasks={setTasks} />}
             {activeTab === 'students' && <StudentsTab students={students} setStudents={setStudents} onPrintClick={() => setShowPrint(true)} />}
             {activeTab === 'settings' && <SettingsTab password={password} setPassword={setPassword} onResetAll={onResetAll} />}
@@ -1321,10 +1465,14 @@
 
       const handleScan = (student) => {
         const todayStr = DateUtils.getTodayStr();
-        const hasSubmittedToday = submissions.some(s => s.studentId === student.id && s.date === todayStr);
+        const existingSub = submissions.find(s => s.studentId === student.id && s.date === todayStr);
         
-        if (hasSubmittedToday) {
-          showToast(`⚠️ ${student.name} さんは、きょう もうていしゅつ しています`, 'error');
+        if (existingSub) {
+          if (existingSub.health === 'absent') {
+            showToast(`⚠️ ${student.name} さんは、きょう「お休み」に なっています`, 'error');
+          } else {
+            showToast(`⚠️ ${student.name} さんは、きょう もうていしゅつ しています`, 'error');
+          }
           return;
         }
         
